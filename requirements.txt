@@ -1,0 +1,7 @@
+Flask
+Flask-WTF
+Flask-Limiter
+redis
+Pillow
+moviepy
+Werkzeug
