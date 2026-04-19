@@ -1,0 +1,7 @@
+# Ignore the massive media folder
+media/
+thumbnails/
+# Never bake secrets or databases into the image
+.env
+*.db
+log/
