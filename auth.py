@@ -1,15 +1,17 @@
 # auth.py
 import os
 import sqlite3
+from datetime import datetime
 from flask import (
     Blueprint, render_template_string, request,
-    redirect, url_for, flash, session, g
+    redirect, url_for, flash, session, g, abort
 )
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 
 AUTH_DB = 'users.db'
+BAN_THRESHOLD = 10  # permanent IP ban after this many failed logins
 auth_bp = Blueprint('auth', __name__)
 limiter = Limiter(
     key_func=get_remote_address,
@@ -27,10 +29,60 @@ def init_auth_db():
             password_hash TEXT NOT NULL
         );
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS failed_logins (
+            ip TEXT PRIMARY KEY,
+            count INTEGER NOT NULL DEFAULT 0,
+            banned INTEGER NOT NULL DEFAULT 0,
+            last_attempt TEXT
+        );
+    """)
     conn.commit()
     conn.close()
 
 init_auth_db()
+
+def _client_ip():
+    return get_remote_address()
+
+def is_ip_banned(ip):
+    try:
+        conn = sqlite3.connect(AUTH_DB)
+        cur = conn.cursor()
+        cur.execute("SELECT banned FROM failed_logins WHERE ip=?", (ip,))
+        row = cur.fetchone()
+        conn.close()
+        return bool(row and row[0])
+    except Exception:
+        return False
+
+def record_failed_login(ip):
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(AUTH_DB)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO failed_logins (ip, count, banned, last_attempt)
+        VALUES (?, 1, 0, ?)
+        ON CONFLICT(ip) DO UPDATE SET
+            count = count + 1,
+            banned = CASE WHEN count + 1 >= ? THEN 1 ELSE banned END,
+            last_attempt = ?
+    """, (ip, now, BAN_THRESHOLD, now))
+    conn.commit()
+    conn.close()
+
+def reset_failed_logins(ip):
+    conn = sqlite3.connect(AUTH_DB)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM failed_logins WHERE ip=?", (ip,))
+    conn.commit()
+    conn.close()
+
+# Block permanently banned IPs on every request
+@auth_bp.before_app_request
+def block_banned_ips():
+    if is_ip_banned(_client_ip()):
+        abort(403)
 
 # Help function: Append to current request
 @auth_bp.before_app_request
@@ -47,8 +99,8 @@ def load_logged_in_user():
             g.user = {'id': row[0], 'username': row[1]}
 
 # Registration
-@limiter.limit("5 per hour")
 @auth_bp.route('/register', methods=('GET','POST'))
+@limiter.limit("5 per hour")
 def register():
     if not REGISTRATION_OPEN:
         flash('Registration is temporarily closed.', 'warning')
@@ -78,8 +130,8 @@ def register():
     return render_template_string(REG_TEMPLATE)
 
 # Login
-@limiter.limit("5 per minute")
 @auth_bp.route('/login', methods=('GET','POST'))
+@limiter.limit("5 per minute")
 def login():
     if request.method == 'POST':
         username = request.form['username'].strip()
@@ -92,17 +144,21 @@ def login():
         conn.close()
         
         if row and check_password_hash(row[1], password):
+            reset_failed_logins(_client_ip())
             session.clear()
             session['user_id'] = row[0]
             flash(f'Welcome, {username}!', 'success')
             return redirect('/')
         else:
+            record_failed_login(_client_ip())
+            if is_ip_banned(_client_ip()):
+                abort(403)
             flash('Invalid login credentials.', 'danger')
     
     return render_template_string(LOGIN_TEMPLATE)
 
 
-@auth_bp.route('/logout')
+@auth_bp.route('/logout', methods=('POST',))
 def logout():
     session.clear()
     response = redirect(url_for('auth.login'))

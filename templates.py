@@ -278,7 +278,10 @@ _NAV_HTML = """
         <div class="user-avatar">{{ g.user.username[0].upper() }}</div>
         {{ g.user.username }}
       </div>
-      <a class="nav-logout" href="{{ url_for('auth.logout') }}">Sign Out</a>
+      <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <button type="submit" class="nav-logout" style="background:none;cursor:pointer;font-family:inherit;">Sign Out</button>
+      </form>
     {% else %}
       <a class="btn btn-primary" href="{{ url_for('auth.login') }}" style="font-size:.8rem;padding:.3rem .75rem;">Sign In</a>
     {% endif %}
