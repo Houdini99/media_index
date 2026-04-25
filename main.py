@@ -1,11 +1,12 @@
 import os
+import random
 import sqlite3
 import hashlib
 import socket
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, url_for, flash, send_from_directory, jsonify, session, g
 from flask_wtf.csrf import CSRFProtect
-from templates import TEMPLATE_INDEX, TEMPLATE_UPLOAD, TEMPLATE_TAGS
+from templates import TEMPLATE_INDEX, TEMPLATE_UPLOAD, TEMPLATE_TAGS, TEMPLATE_FEED
 from auth import auth_bp, login_required, limiter
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -323,6 +324,30 @@ def get_media(ft=None, search=None, exclude_tags=None, page=1):
 
     return enhanced
 
+def get_media_ids(ft=None, search=None, exclude_tags=None):
+    conds, params = _build_where(ft, search, exclude_tags)
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    q = "SELECT id FROM media"
+    if conds:
+        q += " WHERE " + " AND ".join(conds)
+    cur.execute(q, params)
+    ids = [r[0] for r in cur.fetchall()]
+    conn.close()
+    return ids
+
+def get_media_by_ids(ids):
+    if not ids:
+        return []
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    ph = ','.join('?' * len(ids))
+    cur.execute(f"SELECT * FROM media WHERE id IN ({ph})", ids)
+    rows = cur.fetchall()
+    conn.close()
+    by_id = {r[0]: r for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
 def delete_media(mid, user_id):
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
@@ -541,6 +566,54 @@ def api_media():
         for m in media
     ]
     return jsonify({'media': result, 'has_more': has_more})
+
+@app.route('/feed')
+@login_required
+def feed():
+    return render_template_string(TEMPLATE_FEED)
+
+@app.route('/api/feed')
+@login_required
+def api_feed():
+    ft = request.args.get('type', 'all')
+    search = request.args.get('search', '')
+    hide_ai = request.args.get('hide_ai', '')
+    exclude_tags = request.args.get('exclude_tags', '')
+    if hide_ai == '1':
+        ai_tags = 'fake,ai,grok,deepfake,gemini,chatgpt'
+        exclude_tags = (exclude_tags + ',' + ai_tags).strip(',') if exclude_tags else ai_tags
+    try:
+        seed = int(request.args.get('seed', '0'))
+    except (ValueError, TypeError):
+        seed = 0
+    try:
+        page = max(1, min(int(request.args.get('page', 1)), 99999))
+    except (ValueError, TypeError):
+        page = 1
+
+    ids = get_media_ids(ft, search, exclude_tags)
+    rng = random.Random(seed)
+    rng.shuffle(ids)
+
+    start = (page - 1) * PAGE_SIZE
+    end = start + PAGE_SIZE
+    page_ids = ids[start:end]
+    has_more = end < len(ids)
+
+    rows = get_media_by_ids(page_ids)
+    umap = get_usernames_for_media(rows)
+    result = [
+        {
+            'id': m[0],
+            'filepath': os.path.basename(m[1]),
+            'thumb': os.path.basename(m[2]),
+            'tags': m[3] or '',
+            'type': file_type(m[1]),
+            'uploaded_by': umap.get(m[5], 'Unknown'),
+        }
+        for m in rows
+    ]
+    return jsonify({'media': result, 'has_more': has_more, 'total': len(ids)})
 
 @app.route('/api/tags')
 @login_required
