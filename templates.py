@@ -269,6 +269,7 @@ _NAV_HTML = """
   <div class="nav-sep"></div>
   <div class="nav-links">
     <a href="{{ url_for('index') }}"  class="{{ 'active' if request.path == '/' else '' }}">Gallery</a>
+    <a href="{{ url_for('feed') }}"   class="{{ 'active' if request.path.startswith('/feed') else '' }}">Feed</a>
     <a href="{{ url_for('upload') }}" class="{{ 'active' if request.path.startswith('/upload') else '' }}">Upload</a>
     <a href="{{ url_for('tags') }}"   class="{{ 'active' if request.path.startswith('/tags') else '' }}">Tags</a>
   </div>
@@ -1846,6 +1847,542 @@ TEMPLATE_TAGS = (
           const tag = this.querySelector('.tag-name').textContent.trim();
           window.location.href = '{{ url_for("index") }}?search=' + encodeURIComponent(tag);
       });
+  });
+</script>
+</body>
+</html>"""
+)
+
+# ---------------------------------------------------------------------------
+#  Feed (TikTok-style endless shuffle)
+# ---------------------------------------------------------------------------
+TEMPLATE_FEED = (
+    """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>MediaIndex — Feed</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="csrf-token" content="{{ csrf_token() }}"/>
+  <style>"""
+    + _COMMON_CSS
+    + """
+    html, body { height: 100%; overflow: hidden; }
+    body { background: #000; }
+
+    /* Make the global gradient absent on feed */
+    body { background-image: none; }
+
+    .feed-container {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        overflow-y: scroll;
+        scroll-snap-type: y mandatory;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        background: #000;
+    }
+    .feed-container::-webkit-scrollbar { display: none; }
+
+    .feed-slide {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        width: 100%;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+        position: relative;
+        background: #000;
+        overflow: hidden;
+    }
+
+    .feed-media,
+    video.feed-media,
+    img.feed-media {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        object-fit: contain !important;
+        object-position: center center !important;
+        display: block !important;
+        margin: 0 !important;
+    }
+
+    /* Soft gradient backdrop so portrait media doesn't look bare */
+    .feed-slide::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at center, rgba(124,106,255,.06), transparent 60%);
+        pointer-events: none;
+    }
+
+    /* Bottom info overlay */
+    .feed-overlay {
+        position: absolute;
+        left: 0; right: 0; bottom: 0;
+        padding: 1.25rem 1.5rem 1.5rem;
+        background: linear-gradient(to top, rgba(0,0,0,.85) 0%, rgba(0,0,0,.5) 60%, transparent 100%);
+        z-index: 3;
+        pointer-events: none;
+    }
+    .feed-uploader {
+        font-size: .82rem;
+        color: var(--text2);
+        margin-bottom: .55rem;
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+        letter-spacing: -.01em;
+    }
+    .feed-uploader .user-avatar {
+        width: 24px; height: 24px;
+        font-size: .7rem;
+    }
+    .feed-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .3rem;
+        max-width: calc(100% - 80px);
+        pointer-events: auto;
+    }
+
+    /* Right-side action rail */
+    .feed-actions {
+        position: absolute;
+        right: 1rem;
+        bottom: 5rem;
+        display: flex;
+        flex-direction: column;
+        gap: .65rem;
+        z-index: 4;
+    }
+    .feed-btn {
+        width: 46px; height: 46px;
+        border-radius: 50%;
+        background: rgba(20,22,30,.6);
+        border: 1px solid rgba(255,255,255,.12);
+        color: var(--text);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.05rem;
+        cursor: pointer;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        transition: background .15s, border-color .15s, transform .15s;
+        text-decoration: none;
+    }
+    .feed-btn:hover {
+        background: rgba(124,106,255,.25);
+        border-color: var(--border-hi);
+        transform: scale(1.05);
+    }
+    .feed-btn.is-danger:hover {
+        background: rgba(248,81,73,.25);
+        border-color: rgba(248,81,73,.5);
+        color: var(--danger);
+    }
+    .feed-btn.is-active {
+        background: rgba(124,106,255,.3);
+        border-color: var(--border-hi);
+        color: #fff;
+    }
+
+    /* Type badge top-left */
+    .feed-type {
+        position: absolute;
+        top: 1rem; left: 1rem;
+        padding: .25em .65em;
+        border-radius: 5px;
+        font-size: .7rem;
+        font-weight: 700;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+        backdrop-filter: blur(8px);
+        z-index: 3;
+    }
+    .feed-type.video { background: rgba(92,124,255,.55); color: #c0cfff; border: 1px solid rgba(92,124,255,.3); }
+    .feed-type.gif   { background: rgba(168,85,247,.55); color: #e8c5ff; border: 1px solid rgba(168,85,247,.3); }
+    .feed-type.image { background: rgba(20,160,120,.55); color: #a0f0d8; border: 1px solid rgba(20,160,120,.3); }
+
+    /* Mute indicator */
+    .mute-hint {
+        position: absolute;
+        top: 1rem; right: 1rem;
+        padding: .35rem .7rem;
+        border-radius: 99px;
+        font-size: .72rem;
+        background: rgba(20,22,30,.65);
+        border: 1px solid rgba(255,255,255,.12);
+        color: var(--text2);
+        backdrop-filter: blur(10px);
+        z-index: 3;
+        opacity: 0;
+        transition: opacity .25s;
+        pointer-events: none;
+    }
+    .feed-slide.has-video .mute-hint { opacity: 1; }
+
+    /* Loading sentinel slide */
+    .feed-loader-slide {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        scroll-snap-align: start;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: .75rem;
+        color: var(--muted);
+        font-size: .85rem;
+    }
+    .feed-loader {
+        width: 28px; height: 28px;
+        border: 2.5px solid var(--border2);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Empty state */
+    .feed-empty {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: .5rem;
+        color: var(--muted);
+        text-align: center;
+        padding: 2rem;
+    }
+    .feed-empty .empty-icon { font-size: 3rem; opacity: .25; }
+
+    /* Tag pill (override common, ensure visibility on dark bg) */
+    .feed-tags .tag-pill {
+        background: rgba(124,106,255,.18);
+        color: #d8d0ff;
+        border: 1px solid rgba(124,106,255,.32);
+        font-size: .72rem;
+        padding: .15em .55em;
+    }
+    .feed-tags .tag-pill.user-tag {
+        background: rgba(210,153,34,.18);
+        color: #f5d27a;
+        border-color: rgba(210,153,34,.35);
+    }
+    .feed-tags .tag-pill.type-tag {
+        background: rgba(63,185,80,.18);
+        color: #8be098;
+        border-color: rgba(63,185,80,.35);
+    }
+
+    /* Scroll hint on first slide */
+    .scroll-hint {
+        position: absolute;
+        bottom: 1.25rem;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: .72rem;
+        color: var(--muted);
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        opacity: .7;
+        animation: bounce 1.6s ease-in-out infinite;
+        z-index: 3;
+        pointer-events: none;
+    }
+    @keyframes bounce {
+        0%,100% { transform: translate(-50%, 0); }
+        50%     { transform: translate(-50%, -6px); }
+    }
+
+    @media (max-width: 680px) {
+        .feed-overlay { padding: 1rem 1rem 1.25rem; }
+        .feed-actions { right: .65rem; bottom: 4.5rem; gap: .5rem; }
+        .feed-btn { width: 42px; height: 42px; font-size: 1rem; }
+        .feed-tags { max-width: calc(100% - 60px); }
+    }
+  </style>
+</head>
+<body>
+"""
+    + _NAV_HTML
+    + """
+<div class="feed-container" id="feedContainer">
+  <div class="feed-loader-slide" id="initialLoader">
+    <div class="feed-loader"></div>
+    <div>Loading feed…</div>
+  </div>
+</div>
+
+<script>
+  const csrfToken = () => document.querySelector('meta[name="csrf-token"]').content;
+
+  const container = document.getElementById('feedContainer');
+  const initialLoader = document.getElementById('initialLoader');
+
+  // Random seed per visit so the order changes each time the page is opened.
+  let seed = Math.floor(Math.random() * 2147483647);
+  let page = 0;
+  let loading = false;
+  let exhausted = false;
+  let muted = true;
+  let firstLoad = true;
+
+  function esc(s) {
+      return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function makeTagPills(tagsStr) {
+      if (!tagsStr) return '';
+      return tagsStr.split(',').filter(t => t.trim()).map(t => {
+          const tag = t.trim();
+          let cls = 'tag-pill';
+          if (tag.startsWith('user:')) cls += ' user-tag';
+          else if (['image','gif','video'].includes(tag)) cls += ' type-tag';
+          return `<span class="${cls}">${esc(tag)}</span>`;
+      }).join('');
+  }
+
+  function buildSlide(m) {
+      const slide = document.createElement('div');
+      slide.className = 'feed-slide';
+      slide.dataset.id = m.id;
+      slide.dataset.type = m.type;
+      slide.dataset.filepath = m.filepath;
+      // Bulletproof inline styles for the slide too.
+      const slideH = (window.innerHeight - 58) + 'px';
+      Object.assign(slide.style, {
+          position: 'relative',
+          width: '100%',
+          height: slideH,
+          minHeight: slideH,
+          background: '#000',
+          overflow: 'hidden',
+          scrollSnapAlign: 'start',
+          scrollSnapStop: 'always',
+      });
+
+      const isVideo = m.type === 'video';
+      if (isVideo) slide.classList.add('has-video');
+
+      const initial = (m.uploaded_by || '?')[0].toUpperCase();
+
+      slide.innerHTML = `
+        <span class="feed-type ${esc(m.type)}">${esc(m.type)}</span>
+        ${isVideo ? '<div class="mute-hint" data-mute-hint>🔇 Tap to unmute</div>' : ''}
+        <div class="feed-actions">
+          <a class="feed-btn" href="/media/${esc(m.filepath)}" download="${esc(m.filepath)}" title="Download">↓</a>
+          <button class="feed-btn is-danger" onclick="deleteSlide(${m.id})" title="Delete">×</button>
+        </div>
+        <div class="feed-overlay">
+          <div class="feed-uploader">
+            <div class="user-avatar">${esc(initial)}</div>
+            <span>${esc(m.uploaded_by || 'Unknown')}</span>
+          </div>
+          <div class="feed-tags">${makeTagPills(m.tags)}</div>
+        </div>
+      `;
+
+      const mediaEl = document.createElement(isVideo ? 'video' : 'img');
+      mediaEl.className = 'feed-media';
+      mediaEl.dataset.src = '/media/' + m.filepath;
+      // Bulletproof inline styles — beat any cached/conflicting CSS.
+      Object.assign(mediaEl.style, {
+          position: 'absolute',
+          top: '0',
+          left: '0',
+          right: '0',
+          bottom: '0',
+          width: '100%',
+          height: '100%',
+          maxWidth: '100%',
+          maxHeight: '100%',
+          objectFit: 'contain',
+          objectPosition: 'center center',
+          display: 'block',
+          margin: '0',
+      });
+      if (isVideo) {
+          mediaEl.muted = muted;
+          mediaEl.loop = true;
+          mediaEl.playsInline = true;
+          mediaEl.preload = 'metadata';
+          mediaEl.addEventListener('click', () => toggleMute(slide));
+      } else {
+          mediaEl.alt = '';
+      }
+      slide.insertBefore(mediaEl, slide.firstChild);
+
+      return slide;
+  }
+
+  function toggleMute(slide) {
+      muted = !muted;
+      document.querySelectorAll('.feed-slide video').forEach(v => v.muted = muted);
+      const hint = slide.querySelector('[data-mute-hint]');
+      if (hint) {
+          hint.textContent = muted ? '🔇 Tap to unmute' : '🔊 Sound on';
+          hint.style.opacity = '1';
+          clearTimeout(hint._t);
+          hint._t = setTimeout(() => { hint.style.opacity = ''; }, 1500);
+      }
+  }
+
+  function deleteSlide(id) {
+      if (!confirm('Are you sure you want to delete this file?')) return;
+      const fd = new FormData();
+      fetch(`/delete/${id}`, { method: 'POST', headers: {'X-CSRFToken': csrfToken()} })
+          .then(r => {
+              if (!r.ok) throw new Error('fail');
+              const slide = container.querySelector(`.feed-slide[data-id="${id}"]`);
+              if (slide) slide.remove();
+          })
+          .catch(() => alert('Error deleting file.'));
+  }
+
+  // Lazy-load real src once a slide is near
+  const lazyMediaObs = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+          if (!e.isIntersecting) return;
+          const el = e.target.querySelector('.feed-media');
+          if (el && el.dataset.src && !el.src) el.src = el.dataset.src;
+          lazyMediaObs.unobserve(e.target);
+      });
+  }, { root: container, rootMargin: '300px 0px', threshold: 0.01 });
+
+  // Play/pause videos as they enter/leave the viewport
+  const playObs = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+          const v = e.target.querySelector('video');
+          if (!v) return;
+          if (e.isIntersecting && e.intersectionRatio > 0.6) {
+              v.muted = muted;
+              const p = v.play();
+              if (p && p.catch) p.catch(() => {});
+          } else {
+              v.pause();
+          }
+      });
+  }, { root: container, threshold: [0, 0.6, 1] });
+
+  // Trigger more loads when sentinel appears
+  const sentinelObs = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+          if (e.isIntersecting) loadMore();
+      });
+  }, { root: container, rootMargin: '600px 0px' });
+
+  function loadMore() {
+      if (loading || exhausted) return;
+      loading = true;
+      page++;
+      const url = new URL('/api/feed', location.origin);
+      url.searchParams.set('seed', seed);
+      url.searchParams.set('page', page);
+      fetch(url).then(r => r.json()).then(data => {
+          if (firstLoad) {
+              firstLoad = false;
+              if (initialLoader) initialLoader.remove();
+              if (!data.media || data.media.length === 0) {
+                  const empty = document.createElement('div');
+                  empty.className = 'feed-empty';
+                  empty.innerHTML = `
+                    <div class="empty-icon">&#128247;</div>
+                    <div>No media yet</div>
+                    <div style="font-size:.78rem;">Upload something to start the feed.</div>
+                  `;
+                  container.appendChild(empty);
+                  exhausted = true;
+                  loading = false;
+                  return;
+              }
+          }
+          // remove any existing trailing sentinel
+          const oldSentinel = document.getElementById('feedSentinel');
+          if (oldSentinel) oldSentinel.remove();
+
+          (data.media || []).forEach((m, idx) => {
+              const slide = buildSlide(m);
+              container.appendChild(slide);
+              lazyMediaObs.observe(slide);
+              playObs.observe(slide);
+              if (firstLoad === false && page === 1 && idx === 0) {
+                  const hint = document.createElement('div');
+                  hint.className = 'scroll-hint';
+                  hint.textContent = 'Scroll ↓';
+                  slide.appendChild(hint);
+                  setTimeout(() => hint.remove(), 4000);
+              }
+          });
+
+          if (data.has_more) {
+              const sentinel = document.createElement('div');
+              sentinel.id = 'feedSentinel';
+              sentinel.className = 'feed-loader-slide';
+              sentinel.innerHTML = '<div class="feed-loader"></div><div>Loading more…</div>';
+              container.appendChild(sentinel);
+              sentinelObs.observe(sentinel);
+          } else {
+              // Re-shuffle for true endlessness: reset with a fresh seed
+              seed = Math.floor(Math.random() * 2147483647);
+              page = 0;
+              const sentinel = document.createElement('div');
+              sentinel.id = 'feedSentinel';
+              sentinel.className = 'feed-loader-slide';
+              sentinel.innerHTML = '<div class="feed-loader"></div><div>Reshuffling…</div>';
+              container.appendChild(sentinel);
+              sentinelObs.observe(sentinel);
+          }
+          loading = false;
+      }).catch((err) => {
+          console.error('feed load failed', err);
+          loading = false;
+      });
+  }
+
+  // Resize handler — keep all slides matched to the current viewport.
+  window.addEventListener('resize', () => {
+      const h = (window.innerHeight - 58) + 'px';
+      container.style.height = h;
+      document.querySelectorAll('.feed-slide').forEach(s => {
+          s.style.height = h;
+          s.style.minHeight = h;
+      });
+  });
+  // Lock the container height too.
+  container.style.height = (window.innerHeight - 58) + 'px';
+
+  // Kick off
+  loadMore();
+
+  // Keyboard nav (j/k or arrow keys)
+  document.addEventListener('keydown', e => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      const slides = [...container.querySelectorAll('.feed-slide')];
+      if (!slides.length) return;
+      const top = container.scrollTop;
+      const slideH = slides[0].clientHeight || 1;
+      const idx = Math.round(top / slideH);
+      let target = idx;
+      if (e.key === 'ArrowDown' || e.key === 'j') target = Math.min(idx + 1, slides.length - 1);
+      else if (e.key === 'ArrowUp' || e.key === 'k') target = Math.max(idx - 1, 0);
+      else if (e.key === 'm') {
+          muted = !muted;
+          document.querySelectorAll('.feed-slide video').forEach(v => v.muted = muted);
+          return;
+      } else return;
+      e.preventDefault();
+      slides[target].scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 </script>
 </body>

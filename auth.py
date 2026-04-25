@@ -17,7 +17,7 @@ limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=os.environ.get("REDIS_URL", "redis://localhost:6379")
 )
-REGISTRATION_OPEN = False  # set to True temporarily to create your account, then set back to False
+REGISTRATION_OPEN = True  # set to True temporarily to create your account, then set back to False
 # DB initializing
 def init_auth_db():
     conn = sqlite3.connect(AUTH_DB)
