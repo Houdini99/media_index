@@ -2,6 +2,10 @@
 
 A self-hosted media management app for organizing, browsing, and tagging images, GIFs, and videos. Built with Flask, it features user authentication, tag-based search, automatic thumbnail generation, and a dark-themed responsive UI.
 
+> [!NOTE]
+> AI helps me build this stuff. I check over everything and try to fix bugs as fast as possible. Not a master, just building and learning!
+
+
 ## Features
 
 - **Multi-format support** — images (jpg, jpeg, png, webp, heic), GIFs, and videos (mp4, webm, avi, mov, mkv)
