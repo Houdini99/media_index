@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}MediaIndex — Gallery{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}">{% endblock %}
+{% block content %}
+
+<div class="container">
+  {% include '_flash.html' %}
+  <form class="toolbar" action="{{ url_for('media.index') }}" method="get" autocomplete="off">
+    <div class="search-group">
+      <div class="input-wrap">
+        <span class="input-icon">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="6.5" cy="6.5" r="4.5"/><path d="M10.5 10.5l3 3"/>
+          </svg>
+        </span>
+        <input name="search" type="text" placeholder="Search tags…" value="{{ search|e }}">
+      </div>
+      <div class="input-wrap">
+        <span class="input-icon">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M12 4L4 12M4 4l8 8"/>
+          </svg>
+        </span>
+        <input name="exclude_tags" type="text" placeholder="Exclude tags…" value="{{ exclude_tags|e }}">
+      </div>
+    </div>
+    <select name="type">
+      <option value="all"   {% if filter_type=='all'   %}selected{% endif %}>All types</option>
+      <option value="image"  {% if filter_type=='image'  %}selected{% endif %}>Images</option>
+      <option value="video" {% if filter_type=='video' %}selected{% endif %}>Videos</option>
+      <option value="gif"   {% if filter_type=='gif'   %}selected{% endif %}>GIFs</option>
+    </select>
+    <label class="ai-toggle" title="Hide content with the following tags: fake, ai, grok, gemini, chatgpt">
+      <input type="checkbox" name="hide_ai" value="1" {% if hide_ai == '1' %}checked{% endif %} onchange="this.form.submit()">
+      <span class="ai-toggle-track"></span>
+      <span>Hide AI content</span>
+    </label>
+    <div class="toolbar-actions">
+      <button class="btn btn-primary" type="submit">Search</button>
+      <a class="btn btn-ghost" href="{{ url_for('media.index') }}">Reset</a>
+    </div>
+  </form>
+
+  <div class="gallery">
+    {% for media in media %}
+      {%- set ext = media[1].rsplit('.',1)[-1].lower() -%}
+      {%- set mtype = 'video' if ext in ['mp4','webm','avi','mov','mkv'] else ('gif' if ext == 'gif' else 'image') -%}
+      <div class="gallery-item">
+        <div class="action-buttons">
+          <button class="action-btn edit-btn"   onclick="event.stopPropagation(); showEditForm({{ media[0] }})" title="Edit tags">✎</button>
+          <button class="action-btn delete-btn" onclick="event.stopPropagation(); deleteMedia({{ media[0] }})"  title="Delete File">×</button>
+        </div>
+        <div class="thumb-wrapper">
+          <img class="thumb" loading="lazy" onclick="openModal({{ media[0] }})"
+               data-src="/thumbs/{{ media[2].split('/')[-1] }}"
+               src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+               alt=""/>
+          <div class="thumb-overlay"></div>
+          <span class="type-badge {{ mtype }}">{{ mtype }}</span>
+        </div>
+        <div class="card-body">
+          <div class="card-tags">
+            {% if media[3] %}
+              {% for tag in media[3].split(',') %}{% if tag.strip() %}
+                <span class="tag-pill {% if tag.strip().startswith('user:') %}user-tag{% elif tag.strip() in ['image','gif','video'] %}type-tag{% endif %}">{{ tag.strip() }}</span>
+              {% endif %}{% endfor %}
+            {% else %}
+              <span class="no-tags">No Tags</span>
+            {% endif %}
+          </div>
+        </div>
+        <div id="edit-form-{{ media[0] }}" class="edit-form">
+          <input type="text" id="edit-input-{{ media[0] }}" value="{{ media[3] or '' }}" placeholder="Tags separated by commas…" list="tag-suggestions">
+          <div class="edit-form-btns">
+            <button type="button" class="cancel-btn" onclick="hideEditForm({{ media[0] }})">Cancel</button>
+            <button type="button" class="save-btn"   onclick="saveEditedTags({{ media[0] }})">Save</button>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% if not media %}
+      <div class="empty">
+        <div class="empty-icon">&#128193;</div>
+        <h3>No entries found</h3>
+        <p>Try different search terms or reset the filter.</p>
+      </div>
+    {% endif %}
+
+    <div id="scroll-sentinel"></div>
+  </div>
+</div>
+<datalist id="tag-suggestions"></datalist>
+
+<!-- ── MODAL ── -->
+<div id="modal-bg" class="modal-bg" onclick="if(event.target===this) closeModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <span class="modal-title">Preview</span>
+      <div class="modal-header-actions">
+        <a id="modal-download" href="#" download class="modal-btn">↓ Download</a>
+        <button class="modal-btn modal-delete-btn" onclick="modalDelete()" title="Delete file" style="color:var(--danger);border-color:rgba(248,81,73,.25);">🗑 Delete</button>
+        <button class="modal-close" onclick="closeModal()" title="Close">×</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="modal-view-content"></div>
+    </div>
+    <div class="modal-footer">
+      <div class="modal-tags"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="{{ url_for('static', filename='js/index.js') }}"></script>{% endblock %}

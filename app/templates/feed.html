@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}MediaIndex — Feed{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{{ url_for('static', filename='css/feed.css') }}">{% endblock %}
+{% block content %}
+<div class="feed-container" id="feedContainer">
+  <div class="feed-loader-slide" id="initialLoader">
+    <div class="feed-loader"></div>
+    <div>Loading feed…</div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="{{ url_for('static', filename='js/feed.js') }}"></script>{% endblock %}

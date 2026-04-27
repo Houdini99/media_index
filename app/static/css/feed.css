@@ -1,0 +1,243 @@
+html, body { height: 100%; overflow: hidden; }
+    body { background: #000; }
+
+    /* Make the global gradient absent on feed */
+    body { background-image: none; }
+
+    .feed-container {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        overflow-y: scroll;
+        scroll-snap-type: y mandatory;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        background: #000;
+    }
+    .feed-container::-webkit-scrollbar { display: none; }
+
+    .feed-slide {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        width: 100%;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+        position: relative;
+        background: #000;
+        overflow: hidden;
+    }
+
+    .feed-media,
+    video.feed-media,
+    img.feed-media {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        object-fit: contain !important;
+        object-position: center center !important;
+        display: block !important;
+        margin: 0 !important;
+    }
+
+    /* Soft gradient backdrop so portrait media doesn't look bare */
+    .feed-slide::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at center, rgba(124,106,255,.06), transparent 60%);
+        pointer-events: none;
+    }
+
+    /* Bottom info overlay */
+    .feed-overlay {
+        position: absolute;
+        left: 0; right: 0; bottom: 0;
+        padding: 1.25rem 1.5rem 1.5rem;
+        background: linear-gradient(to top, rgba(0,0,0,.85) 0%, rgba(0,0,0,.5) 60%, transparent 100%);
+        z-index: 3;
+        pointer-events: none;
+    }
+    .feed-uploader {
+        font-size: .82rem;
+        color: var(--text2);
+        margin-bottom: .55rem;
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+        letter-spacing: -.01em;
+    }
+    .feed-uploader .user-avatar {
+        width: 24px; height: 24px;
+        font-size: .7rem;
+    }
+    .feed-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .3rem;
+        max-width: calc(100% - 80px);
+        pointer-events: auto;
+    }
+
+    /* Right-side action rail */
+    .feed-actions {
+        position: absolute;
+        right: 1rem;
+        bottom: 5rem;
+        display: flex;
+        flex-direction: column;
+        gap: .65rem;
+        z-index: 4;
+    }
+    .feed-btn {
+        width: 46px; height: 46px;
+        border-radius: 50%;
+        background: rgba(20,22,30,.6);
+        border: 1px solid rgba(255,255,255,.12);
+        color: var(--text);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.05rem;
+        cursor: pointer;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        transition: background .15s, border-color .15s, transform .15s;
+        text-decoration: none;
+    }
+    .feed-btn:hover {
+        background: rgba(124,106,255,.25);
+        border-color: var(--border-hi);
+        transform: scale(1.05);
+    }
+    .feed-btn.is-danger:hover {
+        background: rgba(248,81,73,.25);
+        border-color: rgba(248,81,73,.5);
+        color: var(--danger);
+    }
+    .feed-btn.is-active {
+        background: rgba(124,106,255,.3);
+        border-color: var(--border-hi);
+        color: #fff;
+    }
+
+    /* Type badge top-left */
+    .feed-type {
+        position: absolute;
+        top: 1rem; left: 1rem;
+        padding: .25em .65em;
+        border-radius: 5px;
+        font-size: .7rem;
+        font-weight: 700;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+        backdrop-filter: blur(8px);
+        z-index: 3;
+    }
+    .feed-type.video { background: rgba(92,124,255,.55); color: #c0cfff; border: 1px solid rgba(92,124,255,.3); }
+    .feed-type.gif   { background: rgba(168,85,247,.55); color: #e8c5ff; border: 1px solid rgba(168,85,247,.3); }
+    .feed-type.image { background: rgba(20,160,120,.55); color: #a0f0d8; border: 1px solid rgba(20,160,120,.3); }
+
+    /* Mute indicator */
+    .mute-hint {
+        position: absolute;
+        top: 1rem; right: 1rem;
+        padding: .35rem .7rem;
+        border-radius: 99px;
+        font-size: .72rem;
+        background: rgba(20,22,30,.65);
+        border: 1px solid rgba(255,255,255,.12);
+        color: var(--text2);
+        backdrop-filter: blur(10px);
+        z-index: 3;
+        opacity: 0;
+        transition: opacity .25s;
+        pointer-events: none;
+    }
+    .feed-slide.has-video .mute-hint { opacity: 1; }
+
+    /* Loading sentinel slide */
+    .feed-loader-slide {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        scroll-snap-align: start;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: .75rem;
+        color: var(--muted);
+        font-size: .85rem;
+    }
+    .feed-loader {
+        width: 28px; height: 28px;
+        border: 2.5px solid var(--border2);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Empty state */
+    .feed-empty {
+        height: calc(100vh - 58px);
+        height: calc(100dvh - 58px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: .5rem;
+        color: var(--muted);
+        text-align: center;
+        padding: 2rem;
+    }
+    .feed-empty .empty-icon { font-size: 3rem; opacity: .25; }
+
+    /* Tag pill (override common, ensure visibility on dark bg) */
+    .feed-tags .tag-pill {
+        background: rgba(124,106,255,.18);
+        color: #d8d0ff;
+        border: 1px solid rgba(124,106,255,.32);
+        font-size: .72rem;
+        padding: .15em .55em;
+    }
+    .feed-tags .tag-pill.user-tag {
+        background: rgba(210,153,34,.18);
+        color: #f5d27a;
+        border-color: rgba(210,153,34,.35);
+    }
+    .feed-tags .tag-pill.type-tag {
+        background: rgba(63,185,80,.18);
+        color: #8be098;
+        border-color: rgba(63,185,80,.35);
+    }
+
+    /* Scroll hint on first slide */
+    .scroll-hint {
+        position: absolute;
+        bottom: 1.25rem;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: .72rem;
+        color: var(--muted);
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        opacity: .7;
+        animation: bounce 1.6s ease-in-out infinite;
+        z-index: 3;
+        pointer-events: none;
+    }
+    @keyframes bounce {
+        0%,100% { transform: translate(-50%, 0); }
+        50%     { transform: translate(-50%, -6px); }
+    }
+
+    @media (max-width: 680px) {
+        .feed-overlay { padding: 1rem 1rem 1.25rem; }
+        .feed-actions { right: .65rem; bottom: 4.5rem; gap: .5rem; }
+        .feed-btn { width: 42px; height: 42px; font-size: 1rem; }
+        .feed-tags { max-width: calc(100% - 60px); }
+    }
