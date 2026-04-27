@@ -1,26 +1,26 @@
 # MediaIndex
 
-A self-hosted media management app for organizing, browsing, and tagging images, GIFs, and videos. Built with Flask, it features user authentication, tag-based search, automatic thumbnail generation, and a dark-themed responsive UI.
+A self-hosted media management app for organizing, browsing, and tagging images, GIFs, and videos. Built with Flask using the application factory + Blueprint pattern, it features user authentication, tag-based search, automatic thumbnail generation, and a dark-themed responsive UI.
 
 > [!NOTE]
 > AI helps me build this stuff. I check over everything and try to fix bugs as fast as possible. Not a master, just building and learning!
-
 
 ## Features
 
 - **Multi-format support** — images (jpg, jpeg, png, webp, heic), GIFs, and videos (mp4, webm, avi, mov, mkv)
 - **Automatic thumbnails** — generated from images, GIF first frames, and video frames
-- **Duplicate detection** — SHA256 hash prevents storing the same file twice
+- **Duplicate detection** — SHA-256 hash prevents storing the same file twice
 - **Tag system** — comma-separated tags, per-file editing, tag statistics page
-- **User accounts** — registration/login with bcrypt password hashing and rate-limited login (5/min)
+- **User accounts** — registration/login with hashed passwords, rate-limited login (5/min) and registration (5/hr)
+- **Failed-login IP banning** — permanent ban after 10 failed attempts from the same IP
 - **Search & filter** — filter by type, search by tag, exclude tags (e.g. hide AI content)
-- **Infinite scroll gallery** — paginated API with JS-driven infinite scroll
+- **Infinite scroll gallery + randomized feed** — paginated APIs with JS-driven scroll
 - **Security headers** — HSTS, CSP, X-Frame-Options, Referrer-Policy, etc.
-- **Reverse-proxy ready** — ProxyFix middleware trusts one upstream proxy (e.g. Nginx Proxy Manager)
+- **Reverse-proxy ready** — `ProxyFix` middleware trusts one upstream proxy (e.g. Nginx Proxy Manager)
 - **Docker support** — single `docker compose up` deployment
 
 <p align="center">
-  <img src="preview.png" alt="Description" width="600">
+  <img src="preview.png" alt="MediaIndex preview" width="600">
 </p>
 
 ## Requirements
@@ -33,7 +33,7 @@ A self-hosted media management app for organizing, browsing, and tagging images,
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/media-index.git
+git clone https://github.com/Houdini99/media_index.git
 cd media-index
 ```
 
@@ -70,7 +70,7 @@ The app will be available at `http://localhost:5001` (or whatever `PORT` you set
 
 ### 5. Register the first user
 
-Open the app in your browser and navigate to `/register` to create your account. To disable public registration after setup, set `REGISTRATION_OPEN = False` in `auth.py` and restart the container.
+Open the app in your browser and navigate to `/register` to create your account. To disable public registration after setup, set `REGISTRATION_OPEN = False` in [app/config.py](app/config.py) and rebuild the image.
 
 ---
 
@@ -98,22 +98,24 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env — set SECRET_KEY and optionally DEV_MODE, REDIS_URL
+# Edit .env — set SECRET_KEY and optionally DEV_MODE, REDIS_URL, PORT
 export $(grep -v '^#' .env | xargs)
 ```
 
 ### Run
 
 ```bash
-flask run --host=0.0.0.0 --port=5001
+python run.py
 ```
 
 For production, use a WSGI server (Gunicorn):
 
 ```bash
 pip install gunicorn
-gunicorn -w 2 -b 0.0.0.0:5001 main:app
+gunicorn -w 2 -b 0.0.0.0:5001 run:app
 ```
+
+`run:app` works because `run.py` exposes `app = create_app()` at module scope.
 
 ---
 
@@ -138,26 +140,26 @@ location / {
 
 ## Configuration Reference
 
-All runtime configuration is done via environment variables (or the `.env` file when using Docker Compose).
+All runtime configuration is done via environment variables (or the `.env` file when using Docker Compose). Defaults live in [app/config.py](app/config.py).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SECRET_KEY` | *(required)* | Flask session signing key. Generate with `secrets.token_hex(32)`. |
 | `DEV_MODE` | `false` | Set to `true` in local dev to disable HTTPS-only session cookies. |
 | `REDIS_URL` | `redis://redis:6379` | Redis connection URI used by the rate limiter. |
-| `PORT` | `5001` | Host port exposed by Docker Compose. |
+| `PORT` | `5001` | Host port exposed by Docker Compose; also the port the app listens on. |
 
-Constants inside `main.py` (edit the file to change them):
+Tunables in [app/config.py](app/config.py) (edit the file to change them):
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `UPLOAD_FOLDER` | `media_files` | Directory for uploaded files. |
-| `THUMB_FOLDER` | `thumbnails` | Directory for generated thumbnails. |
+| `UPLOAD_FOLDER` | `<project_root>/media_files` | Directory for uploaded files. |
+| `THUMB_FOLDER` | `<project_root>/thumbnails` | Directory for generated thumbnails. |
 | `THUMB_SIZE` | `(150, 150)` | Thumbnail dimensions in pixels. |
-| `PAGE_SIZE` | `30` | Items per page in the gallery. |
-| `PORT` | `5001` | Port the Flask app listens on. |
-
-To disable user registration, set `REGISTRATION_OPEN = False` in `auth.py`.
+| `PAGE_SIZE` | `30` | Items per page in the gallery / feed. |
+| `BAN_THRESHOLD` | `10` | Failed logins from one IP before a permanent ban. |
+| `REGISTRATION_OPEN` | `True` | Toggle to close public registration. |
+| `MAX_CONTENT_LENGTH` | `10 GiB` | Maximum upload size. |
 
 ---
 
@@ -165,20 +167,58 @@ To disable user registration, set `REGISTRATION_OPEN = False` in `auth.py`.
 
 ```
 media-index/
-├── main.py            # Flask app, routes, media logic
-├── auth.py            # Auth blueprint, login/register, rate limiting
-├── templates.py       # All HTML templates (inline Jinja2 + CSS + JS)
-├── requirements.txt   # Python dependencies
+├── run.py                       # Entry point (Docker CMD target)
+├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
-├── .env.example       # Environment variable template
+├── .dockerignore
+├── .env.example                 # Environment variable template
 ├── .gitignore
-├── media_files/       # Uploaded media (excluded from git)
-├── thumbnails/        # Generated thumbnails (excluded from git)
-├── log/               # Rotating log files (excluded from git)
-├── media_index.db     # Media SQLite database (excluded from git)
-└── users.db           # User SQLite database (excluded from git)
+├── README.md
+└── app/
+    ├── __init__.py              # create_app() factory
+    ├── config.py                # Env-driven configuration
+    ├── extensions.py            # csrf, limiter (no-app-bound)
+    ├── logging_setup.py         # StreamToLogger + rotating file handler
+    ├── auth/
+    │   ├── __init__.py          # auth Blueprint
+    │   ├── routes.py            # /login /register /logout + login_required
+    │   └── db.py                # Auth SQL: users, failed_logins, IP bans
+    ├── media/
+    │   ├── __init__.py          # media Blueprint
+    │   ├── routes.py            # / /upload /feed /tags /api/* /thumbs /media
+    │   ├── db.py                # Media SQL: media table, tag stats, queries
+    │   └── processing.py        # File hashing + image/video thumbnailing
+    ├── main/
+    │   ├── __init__.py          # main Blueprint
+    │   └── routes.py            # /favicon.ico, /robots.txt
+    ├── templates/
+    │   ├── base.html            # Layout (nav + flashes + content blocks)
+    │   ├── _nav.html            # Nav partial
+    │   ├── _flash.html          # Flash-messages partial
+    │   ├── index.html           # Gallery
+    │   ├── upload.html          # Upload page
+    │   ├── tags.html            # Tag statistics
+    │   ├── feed.html            # Randomized feed
+    │   └── auth/
+    │       ├── auth_base.html
+    │       ├── login.html
+    │       └── register.html
+    └── static/
+        ├── css/                 # common.css, auth.css, index.css, ...
+        └── js/                  # index.js, upload.js, tags.js, feed.js
+
+# Runtime state (excluded from git):
+# media_files/    thumbnails/    log/    media_index.db    users.db
 ```
+
+### Architectural notes
+
+- **App factory** — `create_app()` builds and configures the Flask instance; nothing runs at import time.
+- **Three blueprints** — `auth_bp`, `media_bp`, `main_bp` keep concerns separated.
+- **Grouped raw SQL** — every `sqlite3.connect()` lives in `app/auth/db.py` or `app/media/db.py`. Routes never embed SQL.
+- **Static frontend** — all CSS and JS live as files under `app/static/`. Templates use Jinja `{% block %}` inheritance from `base.html`.
+- **Absolute paths** — `Config` anchors all filesystem locations at `PROJECT_ROOT` (the directory containing `run.py`), so paths are immune to the process working directory.
 
 ---
 
@@ -188,21 +228,26 @@ media-index/
 |--------|------|-------------|
 | `GET` | `/` | Gallery page |
 | `GET/POST` | `/upload` | Upload media files |
+| `GET` | `/feed` | Randomized scroll feed |
+| `GET` | `/tags` | Tag statistics page |
 | `POST` | `/delete/<id>` | Delete a media item (owner only) |
 | `POST` | `/edit/<id>` | Update tags on a media item (owner only) |
-| `GET` | `/tags` | Tag statistics page |
 | `GET` | `/api/media` | JSON list of media (supports `type`, `search`, `exclude_tags`, `hide_ai`, `page`) |
+| `GET` | `/api/feed` | JSON randomized feed (supports same filters + `seed`, `page`) |
 | `GET` | `/api/tags` | JSON list of all tags |
 | `GET` | `/mediadata/<id>` | JSON metadata for a single media item |
-| `GET` | `/login` | Login page |
-| `GET` | `/register` | Registration page |
-| `GET` | `/logout` | Logout |
+| `GET` | `/thumbs/<fname>` | Serves a thumbnail (auth-gated) |
+| `GET` | `/media/<fname>` | Serves the original media file (auth-gated) |
+| `GET/POST` | `/login` | Login page |
+| `GET/POST` | `/register` | Registration page |
+| `POST` | `/logout` | Logout |
+| `GET` | `/favicon.ico` / `/robots.txt` | Static |
 
 ---
 
 ## Tech Stack
 
-- **Backend**: Python 3.11, Flask, Flask-WTF (CSRF), Flask-Limiter
+- **Backend**: Python 3.11, Flask (factory + Blueprints), Flask-WTF (CSRF), Flask-Limiter
 - **Storage**: SQLite (media & users), local filesystem (files & thumbnails)
 - **Cache / Rate Limiting**: Redis
 - **Image processing**: Pillow
