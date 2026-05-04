@@ -79,19 +79,35 @@ def get_usernames_for_media(data):
 
 
 # ── Shared WHERE-clause builder ────────────────────────────────────────────
-def _build_where(ft, search, exclude_tags):
-    """Build shared WHERE clause components for media queries."""
+def _build_where(ft, search, exclude_tags, include_tags=None):
+    """Build shared WHERE clause components for media queries.
+
+    `ft` may be a single value ('all'|'image'|'gif'|'video') or a comma-
+    separated list of types, in which case the matching extensions are OR-ed.
+    """
     conds, params = [], []
+    types = []
     if ft and ft != 'all':
-        if ft == 'image':
-            conds.append("(" + " OR ".join(f"filepath LIKE '%.{e}'" for e in Config.ALLOWED_IMAGE_EXT) + ")")
-        elif ft == 'video':
-            conds.append("(" + " OR ".join(f"filepath LIKE '%.{e}'" for e in Config.ALLOWED_VIDEO_EXT) + ")")
-        elif ft == 'gif':
-            conds.append("filepath LIKE '%.gif'")
+        types = [t.strip() for t in str(ft).split(',') if t.strip() and t.strip() != 'all']
+    if types:
+        type_clauses = []
+        for t in types:
+            if t == 'image':
+                type_clauses.append("(" + " OR ".join(f"filepath LIKE '%.{e}'" for e in Config.ALLOWED_IMAGE_EXT) + ")")
+            elif t == 'video':
+                type_clauses.append("(" + " OR ".join(f"filepath LIKE '%.{e}'" for e in Config.ALLOWED_VIDEO_EXT) + ")")
+            elif t == 'gif':
+                type_clauses.append("filepath LIKE '%.gif'")
+        if type_clauses:
+            conds.append("(" + " OR ".join(type_clauses) + ")")
     if search:
         conds.append("tags LIKE ?")
         params.append(f"%{search}%")
+    if include_tags:
+        for tag in [t.strip() for t in include_tags.split(',') if t.strip()]:
+            # Whole-tag match using comma-padded haystack (same trick as exclude).
+            conds.append("(tags IS NOT NULL AND (',' || tags || ',') LIKE ?)")
+            params.append(f"%,{tag},%")
     if exclude_tags:
         for tag in [t.strip() for t in exclude_tags.split(',') if t.strip()]:
             # Match whole tag only by padding the stored tags with commas on both sides,
@@ -102,8 +118,8 @@ def _build_where(ft, search, exclude_tags):
 
 
 # ── Read queries ───────────────────────────────────────────────────────────
-def get_media_count(ft=None, search=None, exclude_tags=None):
-    conds, params = _build_where(ft, search, exclude_tags)
+def get_media_count(ft=None, search=None, exclude_tags=None, include_tags=None):
+    conds, params = _build_where(ft, search, exclude_tags, include_tags)
     conn = _conn()
     cur = conn.cursor()
     q = "SELECT COUNT(*) FROM media"
@@ -115,8 +131,8 @@ def get_media_count(ft=None, search=None, exclude_tags=None):
     return count
 
 
-def get_media(ft=None, search=None, exclude_tags=None, page=1):
-    conds, params = _build_where(ft, search, exclude_tags)
+def get_media(ft=None, search=None, exclude_tags=None, page=1, include_tags=None):
+    conds, params = _build_where(ft, search, exclude_tags, include_tags)
     conn = _conn()
     cur = conn.cursor()
     q = "SELECT * FROM media"
@@ -139,8 +155,8 @@ def get_media(ft=None, search=None, exclude_tags=None, page=1):
     return enhanced
 
 
-def get_media_ids(ft=None, search=None, exclude_tags=None):
-    conds, params = _build_where(ft, search, exclude_tags)
+def get_media_ids(ft=None, search=None, exclude_tags=None, include_tags=None):
+    conds, params = _build_where(ft, search, exclude_tags, include_tags)
     conn = _conn()
     cur = conn.cursor()
     q = "SELECT id FROM media"

@@ -2,6 +2,65 @@
 {% block title %}MediaIndex — Feed{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="{{ url_for('static', filename='css/feed.css') }}">{% endblock %}
 {% block content %}
+<div class="feed-toolbar">
+  <div class="feed-volume" id="feedVolume">
+    <button class="feed-tool-btn" id="feedVolumeBtn" type="button" title="Toggle mute (m)" aria-label="Toggle mute">
+      <svg class="feed-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+        <path data-vol-wave="2" d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        <path data-vol-wave="3" d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+        <g data-vol-mute hidden>
+          <line x1="22" y1="9" x2="16" y2="15"></line>
+          <line x1="16" y1="9" x2="22" y2="15"></line>
+        </g>
+      </svg>
+    </button>
+    <input type="range" id="feedVolumeSlider" class="feed-volume-slider" min="0" max="100" value="100" step="1" aria-label="Volume">
+  </div>
+  <button class="feed-tool-btn" id="feedSettingsBtn" type="button" title="Feed settings" aria-label="Feed settings" aria-expanded="false" aria-controls="feedSettingsPanel">
+    <svg class="feed-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+    </svg>
+  </button>
+</div>
+
+<div class="feed-settings-panel" id="feedSettingsPanel" hidden role="dialog" aria-label="Feed settings">
+  <div class="feed-settings-header">
+    <span>Feed Settings</span>
+    <button type="button" class="feed-settings-close" id="feedSettingsClose" aria-label="Close settings">×</button>
+  </div>
+  <div class="feed-settings-section">
+    <span class="feed-settings-label">Show types</span>
+    <div class="feed-type-toggles">
+      <label class="feed-toggle-chip">
+        <input type="checkbox" data-type-toggle="image" checked>
+        <span>Images</span>
+      </label>
+      <label class="feed-toggle-chip">
+        <input type="checkbox" data-type-toggle="gif" checked>
+        <span>GIFs</span>
+      </label>
+      <label class="feed-toggle-chip">
+        <input type="checkbox" data-type-toggle="video" checked>
+        <span>Videos</span>
+      </label>
+    </div>
+  </div>
+  <div class="feed-settings-section">
+    <label class="feed-settings-label" for="feedIncludeTags">Include tags <span class="feed-settings-hint">comma separated, all must match</span></label>
+    <input type="text" id="feedIncludeTags" class="feed-settings-input" placeholder="e.g. cats, sunset" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="feed-settings-section">
+    <label class="feed-settings-label" for="feedExcludeTags">Exclude tags <span class="feed-settings-hint">comma separated</span></label>
+    <input type="text" id="feedExcludeTags" class="feed-settings-input" placeholder="e.g. ai, fake" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="feed-settings-actions">
+    <button type="button" class="feed-settings-action is-primary" id="feedSettingsApply">Apply</button>
+    <button type="button" class="feed-settings-action" id="feedSettingsReset">Reset</button>
+  </div>
+</div>
+
 <div class="feed-container" id="feedContainer">
   <div class="feed-loader-slide" id="initialLoader">
     <div class="feed-loader"></div>
