@@ -214,8 +214,10 @@ def api_media():
 @media_bp.route('/api/feed')
 @login_required
 def api_feed():
-    ft = request.args.get('type', 'all')
+    # `types` (comma-separated) takes precedence over the legacy single `type`.
+    ft = request.args.get('types') or request.args.get('type', 'all')
     search = request.args.get('search', '')
+    include_tags = request.args.get('include_tags', '')
     hide_ai = request.args.get('hide_ai', '')
     exclude_tags = request.args.get('exclude_tags', '')
     if hide_ai == '1':
@@ -230,7 +232,7 @@ def api_feed():
     except (ValueError, TypeError):
         page = 1
 
-    ids = get_media_ids(ft, search, exclude_tags)
+    ids = get_media_ids(ft, search, exclude_tags, include_tags=include_tags)
     rng = random.Random(seed)
     rng.shuffle(ids)
 
