@@ -8,7 +8,7 @@ import random
 import tempfile
 from flask import (
     render_template, request, redirect, url_for, flash,
-    send_from_directory, jsonify, g
+    send_from_directory, jsonify, g, abort
 )
 from werkzeug.utils import secure_filename
 
@@ -19,6 +19,7 @@ from .db import (
     get_media_ids,
     get_media_by_ids,
     get_media_by_id,
+    get_privacy_for_file,
     get_usernames_for_media,
     get_username_by_id,
     get_tag_statistics,
@@ -44,6 +45,7 @@ from ..config import Config
 @login_required
 def index():
     hide_ai = request.args.get('hide_ai', '')
+    private_only = request.args.get('private_only', '') == '1'
     exclude_tags = request.args.get('exclude_tags', '')
     if hide_ai == '1':
         ai_tags = 'fake,ai,grok,deepfake,gemini'
@@ -51,7 +53,9 @@ def index():
     media = get_media(
         request.args.get('type', 'all'),
         request.args.get('search', ''),
-        exclude_tags
+        exclude_tags,
+        viewer_id=g.user['id'],
+        private_only=private_only,
     )
     return render_template(
         'index.html',
@@ -59,7 +63,8 @@ def index():
         search=request.args.get('search', ''),
         exclude_tags=request.args.get('exclude_tags', ''),
         filter_type=request.args.get('type', 'all'),
-        hide_ai=hide_ai
+        hide_ai=hide_ai,
+        private_only=private_only,
     )
 
 
@@ -78,6 +83,7 @@ def upload():
             if not fn or not allowed_file(fn):
                 results['errors'].append(fn); continue
             tags = request.form.get(f'tags_{i}', '')
+            is_private = request.form.get(f'private_{i}') in ('1', 'on', 'true')
             ext = fn.rsplit('.', 1)[-1].lower()
             with tempfile.NamedTemporaryFile(dir=Config.UPLOAD_FOLDER, delete=False, suffix=f'.{ext}') as tf:
                 tmp = tf.name
@@ -96,7 +102,7 @@ def upload():
                 gen_video_thumb(final, tpath)
             else:
                 gen_placeholder_thumb(tpath)
-            if insert_media(final, tpath, ','.join(filter(None, [tags, file_type(fn)])), fh, uid):
+            if insert_media(final, tpath, ','.join(filter(None, [tags, file_type(fn)])), fh, uid, is_private):
                 results['uploaded'].append(fn)
             else:
                 results['errors'].append(fn)
@@ -122,7 +128,7 @@ def feed():
 @login_required
 def tags():
     """Show tag statistics page"""
-    tag_stats = get_tag_statistics()
+    tag_stats = get_tag_statistics(viewer_id=g.user['id'])
     total_tags = len(tag_stats)
     total_usages = sum(count for _, count in tag_stats)
     return render_template(
@@ -134,15 +140,23 @@ def tags():
 
 
 # ── File serving ──────────────────────────────────────────────────────────
+def _block_if_private(fname):
+    row = get_privacy_for_file(fname)
+    if row and row[1] and row[0] != g.user['id']:
+        abort(404)
+
+
 @media_bp.route('/thumbs/<fname>')
 @login_required
 def serve_thumb(fname):
+    _block_if_private(fname)
     return send_from_directory(Config.THUMB_FOLDER, fname)
 
 
 @media_bp.route('/media/<fname>')
 @login_required
 def serve_media(fname):
+    _block_if_private(fname)
     return send_from_directory(Config.UPLOAD_FOLDER, fname)
 
 
@@ -172,7 +186,7 @@ def edit_tags(media_id):
 @media_bp.route('/mediadata/<int:media_id>')
 @login_required
 def media_meta(media_id):
-    m = get_media_by_id(media_id)
+    m = get_media_by_id(media_id, viewer_id=g.user['id'])
     if m:
         uid = m[5]
         return jsonify({
@@ -182,7 +196,8 @@ def media_meta(media_id):
             'tags': m[3],
             'type': file_type(m[1]),
             'uploaded_by': get_username_by_id(uid) or 'Unknown',
-            'upload_date': m[6]
+            'upload_date': m[6],
+            'is_private': bool(m[7]) if len(m) > 7 else False,
         })
     return jsonify({'error': 'Not found'}), 404
 
@@ -193,6 +208,7 @@ def api_media():
     ft = request.args.get('type', 'all')
     search = request.args.get('search', '')
     hide_ai = request.args.get('hide_ai', '')
+    private_only = request.args.get('private_only', '') == '1'
     exclude_tags = request.args.get('exclude_tags', '')
     if hide_ai == '1':
         ai_tags = 'fake,ai,grok,deepfake,gemini,chatgpt'
@@ -201,8 +217,8 @@ def api_media():
         page = max(1, min(int(request.args.get('page', 1)), 9999))
     except (ValueError, TypeError):
         page = 1
-    media = get_media(ft, search, exclude_tags, page)
-    total = get_media_count(ft, search, exclude_tags)
+    media = get_media(ft, search, exclude_tags, page, viewer_id=g.user['id'], private_only=private_only)
+    total = get_media_count(ft, search, exclude_tags, viewer_id=g.user['id'], private_only=private_only)
     has_more = (page * Config.PAGE_SIZE) < total
     result = [
         {'id': m[0], 'thumb': os.path.basename(m[2]), 'tags': m[3] or '', 'type': file_type(m[1])}
@@ -232,7 +248,7 @@ def api_feed():
     except (ValueError, TypeError):
         page = 1
 
-    ids = get_media_ids(ft, search, exclude_tags, include_tags=include_tags)
+    ids = get_media_ids(ft, search, exclude_tags, include_tags=include_tags, viewer_id=g.user['id'])
     rng = random.Random(seed)
     rng.shuffle(ids)
 
@@ -241,7 +257,7 @@ def api_feed():
     page_ids = ids[start:end]
     has_more = end < len(ids)
 
-    rows = get_media_by_ids(page_ids)
+    rows = get_media_by_ids(page_ids, viewer_id=g.user['id'])
     umap = get_usernames_for_media(rows)
     result = [
         {
@@ -251,6 +267,7 @@ def api_feed():
             'tags': m[3] or '',
             'type': file_type(m[1]),
             'uploaded_by': umap.get(m[5], 'Unknown'),
+            'is_private': bool(m[7]) if len(m) > 7 else False,
         }
         for m in rows
     ]
@@ -260,5 +277,5 @@ def api_feed():
 @media_bp.route('/api/tags')
 @login_required
 def api_tags():
-    tag_stats = get_tag_statistics()
+    tag_stats = get_tag_statistics(viewer_id=g.user['id'])
     return jsonify(sorted(tag for tag, _ in tag_stats))

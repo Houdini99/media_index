@@ -35,6 +35,11 @@
       <span class="ai-toggle-track"></span>
       <span>Hide AI content</span>
     </label>
+    <label class="ai-toggle private-toggle" title="Show only files you uploaded as private">
+      <input type="checkbox" name="private_only" value="1" {% if private_only %}checked{% endif %} onchange="this.form.submit()">
+      <span class="ai-toggle-track"></span>
+      <span>Private only</span>
+    </label>
     <div class="toolbar-actions">
       <button class="btn btn-primary" type="submit">Search</button>
       <a class="btn btn-ghost" href="{{ url_for('media.index') }}">Reset</a>
@@ -57,6 +62,9 @@
                alt=""/>
           <div class="thumb-overlay"></div>
           <span class="type-badge {{ mtype }}">{{ mtype }}</span>
+          {% if media|length > 7 and media[7] %}
+            <span class="type-badge private" title="Only visible to you">private</span>
+          {% endif %}
         </div>
         <div class="card-body">
           <div class="card-tags">

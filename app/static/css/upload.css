@@ -143,6 +143,24 @@
         box-shadow: 0 0 0 3px rgba(124,106,255,.1);
     }
 
+    .privacy-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: .45rem;
+        margin-top: .55rem;
+        font-size: .78rem;
+        color: var(--muted);
+        cursor: pointer;
+        user-select: none;
+    }
+    .privacy-toggle input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+        accent-color: var(--accent);
+        cursor: pointer;
+    }
+    .privacy-toggle:hover { color: var(--text2); }
+
     .upload-btn {
         width: 100%;
         padding: .75rem;

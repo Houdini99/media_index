@@ -89,7 +89,7 @@
             sentinel.innerHTML = '<div class="loader"></div>';
             page++;
             const url = new URL('/api/media', location.origin);
-            ['type','search','exclude_tags','hide_ai'].forEach(k => {
+            ['type','search','exclude_tags','hide_ai','private_only'].forEach(k => {
                 const v = params.get(k);
                 if (v) url.searchParams.set(k, v);
             });

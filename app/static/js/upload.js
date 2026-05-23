@@ -60,8 +60,21 @@ document.addEventListener('DOMContentLoaded', () => {
             tagInput.placeholder = 'Tags (separated by commas)…';
             tagInput.setAttribute('list', 'tag-suggestions');
 
+            const privacyLabel = document.createElement('label');
+            privacyLabel.className = 'privacy-toggle';
+            privacyLabel.title = 'Only you will see this file';
+            const privacyInput = document.createElement('input');
+            privacyInput.type = 'checkbox';
+            privacyInput.name = 'private_' + i;
+            privacyInput.value = '1';
+            const privacyText = document.createElement('span');
+            privacyText.textContent = 'Private (only visible to you)';
+            privacyLabel.appendChild(privacyInput);
+            privacyLabel.appendChild(privacyText);
+
             details.appendChild(fname);
             details.appendChild(tagInput);
+            details.appendChild(privacyLabel);
             div.appendChild(media);
             div.appendChild(details);
             previewsDiv.appendChild(div);

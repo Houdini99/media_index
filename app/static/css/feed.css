@@ -140,6 +140,12 @@ html, body { height: 100%; overflow: hidden; }
     .feed-type.video { background: rgba(92,124,255,.55); color: #c0cfff; border: 1px solid rgba(92,124,255,.3); }
     .feed-type.gif   { background: rgba(168,85,247,.55); color: #e8c5ff; border: 1px solid rgba(168,85,247,.3); }
     .feed-type.image { background: rgba(20,160,120,.55); color: #a0f0d8; border: 1px solid rgba(20,160,120,.3); }
+    .feed-type.private {
+        top: 1rem; left: auto; right: 1rem;
+        background: rgba(248,81,73,.6);
+        color: #ffd9d4;
+        border: 1px solid rgba(248,81,73,.35);
+    }
 
     /* ── Top-right toolbar (volume + cogwheel) ──────────────────────────── */
     .feed-toolbar {

@@ -32,7 +32,8 @@ def init_media_db():
         tags TEXT,
         filehash TEXT UNIQUE,
         uploaded_by INTEGER,
-        upload_date TEXT
+        upload_date TEXT,
+        is_private INTEGER NOT NULL DEFAULT 0
     );
     """)
     cur.execute("PRAGMA table_info(media)")
@@ -41,6 +42,8 @@ def init_media_db():
         cur.execute("ALTER TABLE media ADD COLUMN uploaded_by INTEGER")
     if 'upload_date' not in cols:
         cur.execute("ALTER TABLE media ADD COLUMN upload_date TEXT")
+    if 'is_private' not in cols:
+        cur.execute("ALTER TABLE media ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -79,13 +82,25 @@ def get_usernames_for_media(data):
 
 
 # ── Shared WHERE-clause builder ────────────────────────────────────────────
-def _build_where(ft, search, exclude_tags, include_tags=None):
+def _build_where(ft, search, exclude_tags, include_tags=None, viewer_id=None, private_only=False):
     """Build shared WHERE clause components for media queries.
 
     `ft` may be a single value ('all'|'image'|'gif'|'video') or a comma-
     separated list of types, in which case the matching extensions are OR-ed.
+
+    `viewer_id`, when set, hides rows marked is_private=1 unless they were
+    uploaded by the viewer themselves.
+
+    `private_only`, when truthy together with `viewer_id`, restricts the
+    result to the viewer's *own* private uploads only.
     """
     conds, params = [], []
+    if private_only and viewer_id is not None:
+        conds.append("(is_private = 1 AND uploaded_by = ?)")
+        params.append(viewer_id)
+    elif viewer_id is not None:
+        conds.append("(is_private = 0 OR uploaded_by = ?)")
+        params.append(viewer_id)
     types = []
     if ft and ft != 'all':
         types = [t.strip() for t in str(ft).split(',') if t.strip() and t.strip() != 'all']
@@ -118,8 +133,8 @@ def _build_where(ft, search, exclude_tags, include_tags=None):
 
 
 # ── Read queries ───────────────────────────────────────────────────────────
-def get_media_count(ft=None, search=None, exclude_tags=None, include_tags=None):
-    conds, params = _build_where(ft, search, exclude_tags, include_tags)
+def get_media_count(ft=None, search=None, exclude_tags=None, include_tags=None, viewer_id=None, private_only=False):
+    conds, params = _build_where(ft, search, exclude_tags, include_tags, viewer_id, private_only)
     conn = _conn()
     cur = conn.cursor()
     q = "SELECT COUNT(*) FROM media"
@@ -131,8 +146,8 @@ def get_media_count(ft=None, search=None, exclude_tags=None, include_tags=None):
     return count
 
 
-def get_media(ft=None, search=None, exclude_tags=None, page=1, include_tags=None):
-    conds, params = _build_where(ft, search, exclude_tags, include_tags)
+def get_media(ft=None, search=None, exclude_tags=None, page=1, include_tags=None, viewer_id=None, private_only=False):
+    conds, params = _build_where(ft, search, exclude_tags, include_tags, viewer_id, private_only)
     conn = _conn()
     cur = conn.cursor()
     q = "SELECT * FROM media"
@@ -155,8 +170,8 @@ def get_media(ft=None, search=None, exclude_tags=None, page=1, include_tags=None
     return enhanced
 
 
-def get_media_ids(ft=None, search=None, exclude_tags=None, include_tags=None):
-    conds, params = _build_where(ft, search, exclude_tags, include_tags)
+def get_media_ids(ft=None, search=None, exclude_tags=None, include_tags=None, viewer_id=None):
+    conds, params = _build_where(ft, search, exclude_tags, include_tags, viewer_id)
     conn = _conn()
     cur = conn.cursor()
     q = "SELECT id FROM media"
@@ -168,26 +183,58 @@ def get_media_ids(ft=None, search=None, exclude_tags=None, include_tags=None):
     return ids
 
 
-def get_media_by_ids(ids):
+def get_media_by_ids(ids, viewer_id=None):
     if not ids:
         return []
     conn = _conn()
     cur = conn.cursor()
     ph = ','.join('?' * len(ids))
-    cur.execute(f"SELECT * FROM media WHERE id IN ({ph})", ids)
+    q = f"SELECT * FROM media WHERE id IN ({ph})"
+    params = list(ids)
+    if viewer_id is not None:
+        q += " AND (is_private = 0 OR uploaded_by = ?)"
+        params.append(viewer_id)
+    cur.execute(q, params)
     rows = cur.fetchall()
     conn.close()
     by_id = {r[0]: r for r in rows}
     return [by_id[i] for i in ids if i in by_id]
 
 
-def get_media_by_id(mid):
+def get_media_by_id(mid, viewer_id=None):
     conn = _conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM media WHERE id=?", (mid,))
+    if viewer_id is not None:
+        cur.execute(
+            "SELECT * FROM media WHERE id=? AND (is_private = 0 OR uploaded_by = ?)",
+            (mid, viewer_id),
+        )
+    else:
+        cur.execute("SELECT * FROM media WHERE id=?", (mid,))
     m = cur.fetchone()
     conn.close()
     return m
+
+
+def get_privacy_for_file(fname):
+    """Return (uploaded_by, is_private) for the media row whose stored
+    filepath or thumb ends with `fname`, or None if no such row exists.
+    Used by the file-serving routes to block direct access to private media.
+    """
+    if not fname:
+        return None
+    needle = f"%/{fname}"
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT uploaded_by, COALESCE(is_private, 0) FROM media "
+        "WHERE filepath LIKE ? OR thumb LIKE ? OR filepath = ? OR thumb = ? "
+        "LIMIT 1",
+        (needle, needle, fname, fname),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row
 
 
 def hash_exists(fh):
@@ -199,11 +246,22 @@ def hash_exists(fh):
     return row is not None
 
 
-def get_tag_statistics():
-    """Get all tags and their counts from the database"""
+def get_tag_statistics(viewer_id=None):
+    """Get all tags and their counts from the database.
+
+    When `viewer_id` is set, tags on private media uploaded by other users
+    are excluded so the tag cloud can't leak private content.
+    """
     conn = _conn()
     cur = conn.cursor()
-    cur.execute("SELECT tags FROM media WHERE tags IS NOT NULL AND tags != ''")
+    if viewer_id is not None:
+        cur.execute(
+            "SELECT tags FROM media WHERE tags IS NOT NULL AND tags != '' "
+            "AND (is_private = 0 OR uploaded_by = ?)",
+            (viewer_id,),
+        )
+    else:
+        cur.execute("SELECT tags FROM media WHERE tags IS NOT NULL AND tags != ''")
     rows = cur.fetchall()
     conn.close()
 
@@ -219,7 +277,7 @@ def get_tag_statistics():
 
 
 # ── Write queries ──────────────────────────────────────────────────────────
-def insert_media(fp, th, tags, fh, uid):
+def insert_media(fp, th, tags, fh, uid, is_private=False):
     conn = _conn()
     cur = conn.cursor()
     try:
@@ -228,8 +286,9 @@ def insert_media(fp, th, tags, fh, uid):
         if uname and f"user:{uname}" not in (tags or ""):
             tags = f"{tags},user:{uname}" if tags else f"user:{uname}"
         cur.execute(
-            "INSERT INTO media (filepath,thumb,tags,filehash,uploaded_by,upload_date) VALUES (?,?,?,?,?,?)",
-            (fp, th, tags, fh, uid, udate)
+            "INSERT INTO media (filepath,thumb,tags,filehash,uploaded_by,upload_date,is_private) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (fp, th, tags, fh, uid, udate, 1 if is_private else 0)
         )
         conn.commit()
         return True
