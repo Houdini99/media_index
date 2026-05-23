@@ -71,7 +71,10 @@ def register():
             flash('The password must be at least 8 characters long.', 'danger')
         else:
             pw_hash = generate_password_hash(password)
-            if insert_user(username, pw_hash):
+            # Local import: avoids a circular import via app.media at module load
+            # time (auth.routes is imported before app.media is fully initialised).
+            from ..media.crypto import new_key
+            if insert_user(username, pw_hash, new_key()):
                 flash('Registration successful. Please log in.', 'success')
                 return redirect(url_for('auth.login'))
             else:

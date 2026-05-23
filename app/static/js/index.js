@@ -151,9 +151,10 @@
             }
 
             const dl = document.getElementById('modal-download');
+            const dlName = d.download_name || filename;
             dl.href = '/media/' + filename;
-            dl.setAttribute('download', filename);
-            dl.textContent = '↓ ' + filename;
+            dl.setAttribute('download', dlName);
+            dl.textContent = '↓ ' + dlName;
 
             modal.dataset.currentId = id;
             modal.classList.add('active');

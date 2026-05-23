@@ -20,9 +20,14 @@ def init_auth_db():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL
+            password_hash TEXT NOT NULL,
+            enc_key BLOB
         );
     """)
+    cur.execute("PRAGMA table_info(users)")
+    cols = [c[1] for c in cur.fetchall()]
+    if 'enc_key' not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN enc_key BLOB")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS failed_logins (
             ip TEXT PRIMARY KEY,
@@ -54,13 +59,13 @@ def fetch_user_for_login(username):
     return row
 
 
-def insert_user(username, password_hash):
+def insert_user(username, password_hash, enc_key=None):
     conn = _conn()
     cur = conn.cursor()
     try:
         cur.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?,?)",
-            (username, password_hash)
+            "INSERT INTO users (username, password_hash, enc_key) VALUES (?,?,?)",
+            (username, password_hash, enc_key)
         )
         conn.commit()
         return True
@@ -68,6 +73,40 @@ def insert_user(username, password_hash):
         return False
     finally:
         conn.close()
+
+
+# ── Per-user media encryption key ─────────────────────────────────────────
+def get_user_enc_key(user_id):
+    """Return the user's raw encryption key bytes, or None if unset."""
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("SELECT enc_key FROM users WHERE id=?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    return bytes(row[0])
+
+
+def get_or_create_user_enc_key(user_id):
+    """Return the user's encryption key, lazily generating one on first use.
+
+    Existing users created before per-user encryption was added get a key
+    minted the first time they upload a private file.
+    """
+    existing = get_user_enc_key(user_id)
+    if existing:
+        return existing
+    # Local import to avoid pulling cryptography into the auth module
+    # unless we actually need it.
+    from ..media.crypto import new_key
+    key = new_key()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET enc_key=? WHERE id=?", (key, user_id))
+    conn.commit()
+    conn.close()
+    return key
 
 
 # ── Failed-login / IP-ban tracking ─────────────────────────────────────────

@@ -85,11 +85,12 @@ function buildSlide(m) {
     const privateBadge = m.is_private
         ? `<span class="feed-type private" title="Only visible to you">private</span>`
         : '';
+    const dlName = m.download_name || m.filepath;
     slide.innerHTML = `
       <span class="feed-type ${esc(m.type)}">${esc(m.type)}</span>
       ${privateBadge}
       <div class="feed-actions">
-        <a class="feed-btn" href="/media/${esc(m.filepath)}" download="${esc(m.filepath)}" title="Download">↓</a>
+        <a class="feed-btn" href="/media/${esc(m.filepath)}" download="${esc(dlName)}" title="Download">↓</a>
         <button class="feed-btn is-danger" onclick="deleteSlide(${m.id})" title="Delete">×</button>
       </div>
       <div class="feed-overlay">

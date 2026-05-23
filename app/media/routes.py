@@ -3,12 +3,13 @@
 All persistence calls go through app.media.db; image/video processing
 calls go through app.media.processing.
 """
+import mimetypes
 import os
 import random
 import tempfile
 from flask import (
     render_template, request, redirect, url_for, flash,
-    send_from_directory, jsonify, g, abort
+    send_from_directory, jsonify, g, abort, Response
 )
 from werkzeug.utils import secure_filename
 
@@ -36,8 +37,13 @@ from .processing import (
     gen_video_thumb,
     gen_placeholder_thumb,
 )
+from .crypto import encrypt_file, iter_decrypted, plaintext_size
+from ..auth.db import get_user_enc_key, get_or_create_user_enc_key
 from ..auth.routes import login_required
 from ..config import Config
+
+
+ENC_SUFFIX = '.enc'
 
 
 # ── Pages ─────────────────────────────────────────────────────────────────
@@ -102,6 +108,16 @@ def upload():
                 gen_video_thumb(final, tpath)
             else:
                 gen_placeholder_thumb(tpath)
+            if is_private:
+                key = get_or_create_user_enc_key(uid)
+                enc_final = final + ENC_SUFFIX
+                encrypt_file(final, enc_final, key)
+                os.remove(final)
+                final = enc_final
+                enc_tpath = tpath + ENC_SUFFIX
+                encrypt_file(tpath, enc_tpath, key)
+                os.remove(tpath)
+                tpath = enc_tpath
             if insert_media(final, tpath, ','.join(filter(None, [tags, file_type(fn)])), fh, uid, is_private):
                 results['uploaded'].append(fn)
             else:
@@ -146,10 +162,63 @@ def _block_if_private(fname):
         abort(404)
 
 
+def _serve_encrypted(folder, fname):
+    """Stream a `.enc` file decrypted on the fly, honoring HTTP Range requests.
+
+    Owner is taken from the media row (not from the requesting session) so the
+    correct key is used even if a future change ever allowed shared access.
+    """
+    path = os.path.join(folder, fname)
+    if not os.path.isfile(path):
+        abort(404)
+    row = get_privacy_for_file(fname)
+    if not row:
+        abort(404)
+    owner_uid = row[0]
+    key = get_user_enc_key(owner_uid)
+    if not key:
+        abort(404)
+
+    total = plaintext_size(path)
+    start, end_inclusive = 0, total - 1
+    status = 200
+    headers = {'Accept-Ranges': 'bytes'}
+
+    range_header = request.headers.get('Range', '')
+    if range_header.startswith('bytes=') and total > 0:
+        try:
+            spec = range_header[6:].split(',', 1)[0].strip()
+            s_part, e_part = spec.split('-', 1)
+            start = int(s_part) if s_part else 0
+            end_inclusive = int(e_part) if e_part else total - 1
+            if start < 0 or end_inclusive >= total or start > end_inclusive:
+                raise ValueError
+        except ValueError:
+            return Response(
+                status=416,
+                headers={'Content-Range': f'bytes */{total}', 'Accept-Ranges': 'bytes'},
+            )
+        status = 206
+        headers['Content-Range'] = f'bytes {start}-{end_inclusive}/{total}'
+
+    headers['Content-Length'] = str(end_inclusive - start + 1)
+    original_name = fname[:-len(ENC_SUFFIX)] if fname.endswith(ENC_SUFFIX) else fname
+    mime, _ = mimetypes.guess_type(original_name)
+    headers['Content-Type'] = mime or 'application/octet-stream'
+
+    return Response(
+        iter_decrypted(path, key, start, end_inclusive + 1),
+        status=status,
+        headers=headers,
+    )
+
+
 @media_bp.route('/thumbs/<fname>')
 @login_required
 def serve_thumb(fname):
     _block_if_private(fname)
+    if fname.endswith(ENC_SUFFIX):
+        return _serve_encrypted(Config.THUMB_FOLDER, fname)
     return send_from_directory(Config.THUMB_FOLDER, fname)
 
 
@@ -157,6 +226,8 @@ def serve_thumb(fname):
 @login_required
 def serve_media(fname):
     _block_if_private(fname)
+    if fname.endswith(ENC_SUFFIX):
+        return _serve_encrypted(Config.UPLOAD_FOLDER, fname)
     return send_from_directory(Config.UPLOAD_FOLDER, fname)
 
 
@@ -189,12 +260,15 @@ def media_meta(media_id):
     m = get_media_by_id(media_id, viewer_id=g.user['id'])
     if m:
         uid = m[5]
+        fp_base = os.path.basename(m[1])
+        orig_name = fp_base[:-len(ENC_SUFFIX)] if fp_base.endswith(ENC_SUFFIX) else fp_base
         return jsonify({
             'id': m[0],
-            'filepath': url_for('media.serve_media', fname=os.path.basename(m[1])),
+            'filepath': url_for('media.serve_media', fname=fp_base),
+            'download_name': orig_name,
             'thumb': url_for('media.serve_thumb', fname=os.path.basename(m[2])),
             'tags': m[3],
-            'type': file_type(m[1]),
+            'type': file_type(orig_name),
             'uploaded_by': get_username_by_id(uid) or 'Unknown',
             'upload_date': m[6],
             'is_private': bool(m[7]) if len(m) > 7 else False,
@@ -220,8 +294,10 @@ def api_media():
     media = get_media(ft, search, exclude_tags, page, viewer_id=g.user['id'], private_only=private_only)
     total = get_media_count(ft, search, exclude_tags, viewer_id=g.user['id'], private_only=private_only)
     has_more = (page * Config.PAGE_SIZE) < total
+    def _orig(name):
+        return name[:-len(ENC_SUFFIX)] if name.endswith(ENC_SUFFIX) else name
     result = [
-        {'id': m[0], 'thumb': os.path.basename(m[2]), 'tags': m[3] or '', 'type': file_type(m[1])}
+        {'id': m[0], 'thumb': os.path.basename(m[2]), 'tags': m[3] or '', 'type': file_type(_orig(m[1]))}
         for m in media
     ]
     return jsonify({'media': result, 'has_more': has_more})
@@ -259,13 +335,16 @@ def api_feed():
 
     rows = get_media_by_ids(page_ids, viewer_id=g.user['id'])
     umap = get_usernames_for_media(rows)
+    def _orig(name):
+        return name[:-len(ENC_SUFFIX)] if name.endswith(ENC_SUFFIX) else name
     result = [
         {
             'id': m[0],
             'filepath': os.path.basename(m[1]),
+            'download_name': _orig(os.path.basename(m[1])),
             'thumb': os.path.basename(m[2]),
             'tags': m[3] or '',
-            'type': file_type(m[1]),
+            'type': file_type(_orig(m[1])),
             'uploaded_by': umap.get(m[5], 'Unknown'),
             'is_private': bool(m[7]) if len(m) > 7 else False,
         }

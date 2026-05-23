@@ -48,7 +48,9 @@
 
   <div class="gallery">
     {% for media in media %}
-      {%- set ext = media[1].rsplit('.',1)[-1].lower() -%}
+      {%- set raw = media[1] -%}
+      {%- set base = raw[:-4] if raw.endswith('.enc') else raw -%}
+      {%- set ext = base.rsplit('.',1)[-1].lower() -%}
       {%- set mtype = 'video' if ext in ['mp4','webm','avi','mov','mkv'] else ('gif' if ext == 'gif' else 'image') -%}
       <div class="gallery-item">
         <div class="action-buttons">
