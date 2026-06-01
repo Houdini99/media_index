@@ -133,6 +133,25 @@ function buildSlide(m) {
 }
 
 // ── Video progress bar (per-slide) ────────────────────────────────────────
+// One shared drag state + a single pair of document listeners. The old code
+// attached mousemove/mouseup to `document` *per slide*, leaking one handler for
+// every video ever built — so a long feed ran hundreds of them on each move.
+let activeProgressDrag = null;
+
+function progressSeek(drag, e) {
+    const rect = drag.track.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    if (drag.video.duration) drag.video.currentTime = pct * drag.video.duration;
+}
+function endProgressDrag() {
+    if (!activeProgressDrag) return;
+    activeProgressDrag.bar.classList.remove('is-dragging');
+    activeProgressDrag = null;
+}
+document.addEventListener('mousemove', (e) => { if (activeProgressDrag) progressSeek(activeProgressDrag, e); });
+document.addEventListener('mouseup', endProgressDrag);
+
 function attachVideoProgress(slide, video) {
     const bar = document.createElement('div');
     bar.className = 'feed-progress';
@@ -165,37 +184,23 @@ function attachVideoProgress(slide, video) {
         cur.textContent = fmtTime(video.currentTime);
     });
 
-    function seekFromEvent(e) {
-        const rect = track.getBoundingClientRect();
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-        if (video.duration) video.currentTime = pct * video.duration;
-    }
-
-    let dragging = false;
-    track.addEventListener('mousedown', (e) => {
+    const drag = { video, track, bar };
+    const begin = (e) => {
         e.stopPropagation();
-        dragging = true;
+        activeProgressDrag = drag;
         bar.classList.add('is-dragging');
-        seekFromEvent(e);
-    });
+        progressSeek(drag, e);
+    };
+    track.addEventListener('mousedown', begin);
     track.addEventListener('click', (e) => e.stopPropagation());
-    track.addEventListener('touchstart', (e) => {
-        e.stopPropagation();
-        dragging = true;
-        bar.classList.add('is-dragging');
-        seekFromEvent(e);
-    }, { passive: true });
+    track.addEventListener('touchstart', begin, { passive: true });
     track.addEventListener('touchmove', (e) => {
-        if (!dragging) return;
+        if (activeProgressDrag !== drag) return;
         e.preventDefault();
-        seekFromEvent(e);
+        progressSeek(drag, e);
     }, { passive: false });
-    const stopDrag = () => { dragging = false; bar.classList.remove('is-dragging'); };
-    document.addEventListener('mousemove', (e) => { if (dragging) seekFromEvent(e); });
-    document.addEventListener('mouseup', stopDrag);
-    track.addEventListener('touchend', stopDrag);
-    track.addEventListener('touchcancel', stopDrag);
+    track.addEventListener('touchend', endProgressDrag);
+    track.addEventListener('touchcancel', endProgressDrag);
 }
 
 // ── Volume / mute ─────────────────────────────────────────────────────────
@@ -338,20 +343,51 @@ function deleteSlide(id) {
 }
 window.deleteSlide = deleteSlide;
 
-const lazyMediaObs = new IntersectionObserver((entries) => {
+// ── Media windowing ───────────────────────────────────────────────────────
+// Only slides near the viewport keep their media loaded. When a slide scrolls
+// far away we tear its <img>/<video> source down so the browser can release the
+// decoded bitmap and (for video) the buffered data + decoder. Without this,
+// every file you scroll past stays resident until the tab has to be refreshed —
+// exactly the slowdown this feed used to hit on long sessions. The window
+// (±1.5 viewports) is wide enough that media reloads — from the HTTP cache, so
+// no re-download — well before a slide scrolls back into view.
+function loadSlideMedia(slide) {
+    const el = slide.querySelector('.feed-media');
+    if (!el || el.src) return;
+    el.src = el.dataset.src;
+    if (el.tagName === 'VIDEO') el.load();
+}
+function unloadSlideMedia(slide) {
+    const el = slide.querySelector('.feed-media');
+    if (!el || !el.getAttribute('src')) return;
+    if (el.tagName === 'VIDEO') {
+        el.pause();
+        el.removeAttribute('src');
+        el.load();                       // frees buffered data + decoder
+        const fill = slide.querySelector('[data-progress-fill]');
+        const handle = slide.querySelector('[data-progress-handle]');
+        const cur = slide.querySelector('[data-progress-current]');
+        if (fill) fill.style.width = '0%';
+        if (handle) handle.style.left = '0%';
+        if (cur) cur.textContent = '0:00';
+    } else {
+        el.removeAttribute('src');       // drops the decoded bitmap
+    }
+}
+
+const mediaWindowObs = new IntersectionObserver((entries) => {
     entries.forEach(e => {
-        if (!e.isIntersecting) return;
-        const el = e.target.querySelector('.feed-media');
-        if (el && el.dataset.src && !el.src) el.src = el.dataset.src;
-        lazyMediaObs.unobserve(e.target);
+        if (e.isIntersecting) loadSlideMedia(e.target);
+        else unloadSlideMedia(e.target);
     });
-}, { root: container, rootMargin: '300px 0px', threshold: 0.01 });
+}, { root: container, rootMargin: '150% 0px', threshold: 0 });
 
 const playObs = new IntersectionObserver((entries) => {
     entries.forEach(e => {
         const v = e.target.querySelector('video');
         if (!v) return;
         if (e.isIntersecting && e.intersectionRatio > 0.6) {
+            loadSlideMedia(e.target);   // ensure source is attached before play
             v.muted = settings.muted;
             v.volume = settings.volume;
             const p = v.play();
@@ -427,7 +463,7 @@ function loadMore(loaderEl) {
             (data.media || []).forEach((m, idx) => {
                 const slide = buildSlide(m);
                 container.appendChild(slide);
-                lazyMediaObs.observe(slide);
+                mediaWindowObs.observe(slide);
                 playObs.observe(slide);
                 if (page === 1 && idx === 0) {
                     const hint = document.createElement('div');

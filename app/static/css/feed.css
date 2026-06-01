@@ -25,6 +25,12 @@ html, body { height: 100%; overflow: hidden; }
         position: relative;
         background: #000;
         overflow: hidden;
+        /* Skip rendering work for off-screen slides; pairs with the JS media
+           unloading so a long feed stays light. Intrinsic sizes keep scroll
+           math stable for slides that haven't been rendered yet. */
+        content-visibility: auto;
+        contain-intrinsic-width: auto 100vw;
+        contain-intrinsic-height: auto calc(100dvh - 58px);
     }
 
     .feed-media,
