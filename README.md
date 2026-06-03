@@ -10,11 +10,12 @@ A self-hosted media management app for organizing, browsing, and tagging images,
 - **Multi-format support** — images (jpg, jpeg, png, webp, heic), GIFs, and videos (mp4, webm, avi, mov, mkv)
 - **Automatic thumbnails** — generated from images, GIF first frames, and video frames
 - **Duplicate detection** — SHA-256 hash prevents storing the same file twice
-- **Tag system** — comma-separated tags, per-file editing, tag statistics page
-- **User accounts** — registration/login with hashed passwords, rate-limited login (5/min) and registration (5/hr)
+- **Private uploads (encrypted at rest)** — mark any upload private; the file *and* its thumbnail are encrypted with a per-user AES-256 key and hidden from everyone else. Encrypted videos still stream via HTTP range requests. See [Private Uploads & Encryption](#private-uploads--encryption).
+- **Tag system** — comma-separated tags, per-file editing, tag statistics page, automatic `user:<name>` tag on every upload
+- **User accounts** — registration/login with hashed passwords (8-char minimum), rate-limited login (5/min) and registration (5/hr)
 - **Failed-login IP banning** — permanent ban after 10 failed attempts from the same IP
-- **Search & filter** — filter by type, search by tag, exclude tags (e.g. hide AI content)
-- **Infinite scroll gallery + randomized feed** — paginated APIs with JS-driven scroll
+- **Search & filter** — filter by type, search by tag, include/exclude tags, hide AI content, and a "private only" view
+- **Infinite scroll gallery + randomized feed** — paginated APIs with JS-driven scroll and a reproducible per-session shuffle seed
 - **Security headers** — HSTS, CSP, X-Frame-Options, Referrer-Policy, etc.
 - **Reverse-proxy ready** — `ProxyFix` middleware trusts one upstream proxy (e.g. Nginx Proxy Manager)
 - **Docker support** — single `docker compose up` deployment
@@ -34,7 +35,7 @@ A self-hosted media management app for organizing, browsing, and tagging images,
 
 ```bash
 git clone https://github.com/Houdini99/media_index.git
-cd media-index
+cd media_index
 ```
 
 ### 2. Create the environment file
@@ -85,8 +86,8 @@ Open the app in your browser and navigate to `/register` to create your account.
 ### Setup
 
 ```bash
-git clone https://github.com/your-username/media-index.git
-cd media-index
+git clone https://github.com/Houdini99/media_index.git
+cd media_index
 
 python -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
@@ -146,7 +147,7 @@ All runtime configuration is done via environment variables (or the `.env` file 
 |----------|---------|-------------|
 | `SECRET_KEY` | *(required)* | Flask session signing key. Generate with `secrets.token_hex(32)`. |
 | `DEV_MODE` | `false` | Set to `true` in local dev to disable HTTPS-only session cookies. |
-| `REDIS_URL` | `redis://redis:6379` | Redis connection URI used by the rate limiter. |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection URI used by the rate limiter. The bundled `docker-compose.yml` overrides this to `redis://redis:6379` so it reaches the `redis` service. |
 | `PORT` | `5001` | Host port exposed by Docker Compose; also the port the app listens on. |
 
 Tunables in [app/config.py](app/config.py) (edit the file to change them):
@@ -183,12 +184,13 @@ media-index/
     ├── auth/
     │   ├── __init__.py          # auth Blueprint
     │   ├── routes.py            # /login /register /logout + login_required
-    │   └── db.py                # Auth SQL: users, failed_logins, IP bans
+    │   └── db.py                # Auth SQL: users (+ per-user enc_key), failed_logins, IP bans
     ├── media/
     │   ├── __init__.py          # media Blueprint
     │   ├── routes.py            # / /upload /feed /tags /api/* /thumbs /media
     │   ├── db.py                # Media SQL: media table, tag stats, queries
-    │   └── processing.py        # File hashing + image/video thumbnailing
+    │   ├── processing.py        # File hashing + image/video thumbnailing
+    │   └── crypto.py            # AES-256-CTR encrypt/range-decrypt for private files
     ├── main/
     │   ├── __init__.py          # main Blueprint
     │   └── routes.py            # /favicon.ico, /robots.txt
@@ -222,6 +224,22 @@ media-index/
 
 ---
 
+## Private Uploads & Encryption
+
+Any file can be flagged **private** at upload time (a per-file toggle on the upload page). Private media is encrypted at rest and is only ever visible to the user who uploaded it.
+
+**How it works**
+
+- **Per-user key** — every user has a random 32-byte AES-256 key stored in the `enc_key` column of `users.db`. It is minted at registration, and lazily generated on first private upload for accounts created before the feature existed.
+- **What gets encrypted** — both the original file and its generated thumbnail are encrypted and written with a `.enc` suffix; the plaintext copies are deleted. Public uploads are stored as-is.
+- **AES-256-CTR + streaming** — CTR mode lets the server decrypt arbitrary byte ranges without reading the whole file, so encrypted videos still seek and stream correctly over HTTP `Range` requests. On-disk layout is `nonce(16 bytes) || ciphertext` ([app/media/crypto.py](app/media/crypto.py)).
+- **Access control** — private rows are filtered out of the gallery, the feed, the tag statistics, and the JSON APIs for everyone except the owner. The `/thumbs` and `/media` file-serving routes also re-check ownership before decrypting, so a leaked filename can't be fetched by another logged-in user. A **"Private only"** toggle on the gallery shows just your own private uploads.
+
+> [!WARNING]
+> Encryption keys live in `users.db` alongside the accounts, so this protects file contents on the media disk — **not** against someone who has both your database files. There is no authentication tag (CTR provides confidentiality, not integrity). Treat it as "private from other users of the same instance," not as a hardened secrets vault. Keep `SECRET_KEY` and `users.db` safe, and back up `users.db` — losing it means losing the keys to decrypt every private file.
+
+---
+
 ## API Endpoints
 
 | Method | Path | Description |
@@ -232,12 +250,12 @@ media-index/
 | `GET` | `/tags` | Tag statistics page |
 | `POST` | `/delete/<id>` | Delete a media item (owner only) |
 | `POST` | `/edit/<id>` | Update tags on a media item (owner only) |
-| `GET` | `/api/media` | JSON list of media (supports `type`, `search`, `exclude_tags`, `hide_ai`, `page`) |
-| `GET` | `/api/feed` | JSON randomized feed (supports same filters + `seed`, `page`) |
+| `GET` | `/api/media` | JSON list of media (supports `type`, `search`, `exclude_tags`, `hide_ai`, `private_only`, `page`) |
+| `GET` | `/api/feed` | JSON randomized feed (supports `types` (comma-separated, takes precedence over `type`), `search`, `include_tags`, `exclude_tags`, `hide_ai`, `seed`, `page`) |
 | `GET` | `/api/tags` | JSON list of all tags |
-| `GET` | `/mediadata/<id>` | JSON metadata for a single media item |
-| `GET` | `/thumbs/<fname>` | Serves a thumbnail (auth-gated) |
-| `GET` | `/media/<fname>` | Serves the original media file (auth-gated) |
+| `GET` | `/mediadata/<id>` | JSON metadata for a single media item (id, urls, tags, type, uploader, date, `is_private`) |
+| `GET` | `/thumbs/<fname>` | Serves a thumbnail (auth-gated; decrypts `.enc` thumbnails on the fly) |
+| `GET` | `/media/<fname>` | Serves the original media file (auth-gated; decrypts `.enc` files on the fly with HTTP `Range` support) |
 | `GET/POST` | `/login` | Login page |
 | `GET/POST` | `/register` | Registration page |
 | `POST` | `/logout` | Logout |
@@ -252,6 +270,7 @@ media-index/
 - **Cache / Rate Limiting**: Redis
 - **Image processing**: Pillow
 - **Video processing**: moviepy + FFmpeg
+- **Encryption**: `cryptography` (AES-256-CTR for private files)
 - **Frontend**: Vanilla JS, CSS custom properties, dark theme
 
 ## License
