@@ -278,6 +278,10 @@ html, body { height: 100%; overflow: hidden; }
         opacity: 1;
         transform: translateY(0) scale(1);
     }
+    /* When closed the JS sets the `hidden` attribute (after the fade-out
+       finishes). Without this the `display: flex` above would keep the panel
+       laid out — invisible but still capturing clicks and blocking scroll. */
+    .feed-settings-panel[hidden] { display: none; }
     .feed-settings-header {
         display: flex;
         align-items: center;

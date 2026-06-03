@@ -496,11 +496,20 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     @media (max-width: 680px) {
-        nav { padding: 0 1rem; gap: .5rem; }
-        .nav-links a { padding: .35rem .55rem; font-size: .78rem; }
-        .brand-name { display: none; }
         .container { padding: 1rem; }
         .toolbar { padding: .6rem .75rem; }
         .search-group { flex-wrap: wrap; }
+        .toolbar-actions { flex: 1; }
+        .toolbar-actions .btn { flex: 1; justify-content: center; }
         .gallery { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .6rem; }
+
+        /* Modal: let the header wrap and shrink so the action buttons
+           never spill past the edge of the screen. */
+        .modal-bg { padding: .75rem; }
+        .modal-header { flex-wrap: wrap; gap: .4rem; padding: .6rem .75rem; }
+        .modal-header-actions { gap: .3rem; flex-wrap: wrap; justify-content: flex-end; }
+        .modal-btn { padding: .3rem .55rem; font-size: .76rem; }
+        .modal-body { padding: .6rem; }
+        .modal-media { max-height: 64vh; }
+        .modal-footer { padding: .6rem .75rem; }
     }
